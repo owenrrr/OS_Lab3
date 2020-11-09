@@ -5,6 +5,7 @@
 
 using namespace std;
 
+// 目录项
 typedef struct directory_entry{
 	char name[8];
 	char extension[3];
@@ -16,7 +17,7 @@ typedef struct directory_entry{
 	unsigned int size;
 }DirEntry;
 
-
+// 文件夹或文件项
 typedef struct file_info {
 	string name;
 	string filter_name;
@@ -26,32 +27,48 @@ typedef struct file_info {
 	int level;
 }FileInfo;
 
-FileInfo fileInfoArray[1000];
+// 存取所有从a.img中拿出的表项
+FileInfo array[1000];
 int tableSize = 0;
 string imgName = "a.img";
 
+// asm函数
 extern "C" {
 	void asmPrint(const char *str, int color);
 }
-void printStr(string s);
-void printStr_Red(string s);
-void excute(string commond);
-void loop();
-int readImage();
-void readDir(FileInfo& dir, ifstream& image);
-void getFileName(FileInfo &fileInfo, DirEntry &dirEntry, string dirName);
+
 void ls(int pos, string paramter);
 void cat(int pos);
+void loop();
+void excute(string command);
+
+// 初始读取镜像函数，赋值给数组
+int readImage();
+// 读取文件夹下(包括子文件、子文件夹)
+void readDir(FileInfo& dir, ifstream& image);
+
+// 拿出文件属性（纯粹文件名、文件名包含路径）
+void getFileName(FileInfo &fileInfo, DirEntry &dirEntry, string dirName);
+
+// 返回数组索引
+int findFile(string filePath);
+
+// 获取FAT表项中下一簇
+int getNextCluster(int cluster, ifstream& img);
+
+// 计算子文件/夹数量
 int subDirNum(int pos);
 int subFileNum(int pos);
-int findFile(string filePath);
-int getNextCluster(int cluster, ifstream& img);
+
+// 打印函数
+void printStr(string s);
+void printStr_Red(string s);
 
 int main() {
 
 	int control = readImage();
 	if (control == 0){
-        printStr("Cannot find such file or directory.\n");
+        printStr("No such file or directory.\n");
         return;
     }
 
@@ -61,19 +78,22 @@ int main() {
 }
 
 void loop(){
-    string commond;
+    string command;
     while (true){
         printStr(">>");
-        getline(cin, commond);
+        getline(cin, command);
 
-        if (commond=="exit") break;
+        if (command=="exit") break;
         else{
-            excute(commond);
+            excute(command);
         }
     }
     return;
 }
 
+/**
+ * 读取镜像，赋值给数组array
+*/
 int readImage(){
     ifstream image;
     image.open(imageName);
@@ -87,7 +107,7 @@ int readImage(){
     root.level = 0;
     root.size = 0;
     root.start_cluster = -12;
-    fileInfoArray[tableSize++] = root;
+    array[tableSize++] = root;
 
     readDir(root, image);
 
@@ -95,15 +115,19 @@ int readImage(){
     return 1;
 }
 
+/**
+ * 读取当前文件夹下所有文件/夹
+ * 并存放到数组内
+*/
 void readDir(FileInfo& dir, ifstream& image){
     DirEntry tempDirEntry;
     DirEntry* dir_ptr = &tempDirEntry;
 
-    int start = (dir.start_cluster + 31) * 512;
+    int start = (dir_ptr.start_cluster + 31) * 512;
 
-    image.seekg(start);
+    image.seekg(start);  
     for (int i=0; i<16; i++){
-        image.seekg(start + 32 * i);
+        image.seekg(start + 32 * i);  
         image.read((char *)dir_ptr, 32);
 
         char * name = tempDirEntry.name;
@@ -116,7 +140,7 @@ void readDir(FileInfo& dir, ifstream& image){
                 continue;
             }
             FileInfo fileInfo;
-            getFileName(fileInfo, tempDirEntry, dir.name);
+            getFileName(fileInfo, tempDirEntry, dir_ptr.name);
             if (tempDirEntry.attribute==0x10){
                 fileInfo.attribute = 0;
             }
@@ -125,9 +149,9 @@ void readDir(FileInfo& dir, ifstream& image){
             }
             fileInfo.start_cluster = tempDirEntry.start_cluster;
             fileInfo.size = tempDirEntry.size;
-            fileInfo.level = dir.level + 1;
+            fileInfo.level = dir_ptr.level + 1;
 
-            fileInfoArray[tableSize] = fileInfo;
+            array[tableSize] = fileInfo;
             tableSize++;
 
             // if this is a directory, recycle read Directory
@@ -138,6 +162,9 @@ void readDir(FileInfo& dir, ifstream& image){
     }
 }
 
+/**
+ * 获取纯粹的文件名,和包含路径的文件名
+*/
 void getFileName(FileInfo& fileInfo, DirEntry& dirEntry, string dirName){
     char name[20];
     int counter = 0;
@@ -152,6 +179,7 @@ void getFileName(FileInfo& fileInfo, DirEntry& dirEntry, string dirName){
         }
     }else{
         while (true){
+            // 文件名不满8字符以空格0x20填充
             if (counter == 8 || dirEntry.name[counter] == ' ') {
                 break;
             }
@@ -176,40 +204,32 @@ void getFileName(FileInfo& fileInfo, DirEntry& dirEntry, string dirName){
     }
 }
 
-void printStr(string s) {
-	const char *ptr = s.c_str();
-	asmPrint(ptr, 0);
-}
-
-void printStr_Red(string s) {
-	const char *ptr = s.c_str();
-	asmPrint(ptr, 1);
-}
-
-void excute(string commond){
+void excute(string command){
     string mode;
     string paramter;
     string filePath;
     string temp;
 
     stringstream ss;
-    ss << commond;
+    ss << command;
 
+    // 划分命令，如ls -l NJU, mode = "ls"
     ss >> mode;
     if (mode != "cat" && mode != "ls"){
-        printStr("Commond not found.\n");
+        printStr("Command not found.\n");
         return;
     }
 
+    // ss输入流内还剩-l NJU,则第一次循环temp = "-l", 第二次temp = "NJU"
     while (getline(ss, temp, ' ')){
         if (temp[0] == '-'){
             if (mode == "cat"){
-                printStr("Commond not found.\n");
+                printStr("Command not found.\n");
                 return;
             }
             else if (mode == "ls"){
                 if (temp[1] != 'l'){
-                    printStr("Commond not found.\n");
+                    printStr("Command not found.\n");
                     return;
                 }
                 else{
@@ -237,7 +257,7 @@ void excute(string commond){
     }
 
     if (mode == "ls"){
-        if (fileInfoArray[pos].attribute != 0){
+        if (array[pos].attribute != 0){
             printStr("It's not a directory.\n");
             return;
         }
@@ -246,21 +266,24 @@ void excute(string commond){
 
 }
 
+/*
+*返回数组索引
+**/
 int findFile(string filePath){
 
+    // 确保路径规范
     if (filePath.length() == 0 || filePath[0] != '/'){
         filePath = "/" + filePath;
     }
     if (filePath != "/"&&filePath[filePath.length() - 1] == '/') {
 		filePath = filePath.substr(0, filePath.length() - 1);
-	}
-
+	
     int pos = 0;
     while (true){
         if (pos >= tableSize){
             return -1;
         }
-        if (fileInfoArray[pos].name == filePath){
+        if (array[pos].name == filePath){
             break;
         }
         pos++;
@@ -271,13 +294,15 @@ int findFile(string filePath){
 }
 
 void ls(int pos, string paramter){
-    FileInfo& dirInfo = fileInfoArray[pos];
+    FileInfo& dirInfo = array[pos];
     if (dirInfo.level == 0){
         printStr(dir.name);
     }
     else{
         printStr(dir.name+"/");
     }
+
+    // 打印子文件/夹数
     if (paramter == "-l") {
         printStr(" " + to_string(subDirNum(pos)));
 		printStr(" " + to_string(subFileNum(pos)));
@@ -297,13 +322,9 @@ void ls(int pos, string paramter){
 
     pos++;
 
-    // Sub file or directory
+    // 子文件或子文件夹
     for (int i = pos; i < tableSize; i++) {
-		FileInfo &curFile = fileInfoArray[i];
-		if (curFile.level == dir.level) {
-			break;
-		}
-
+		FileInfo &curFile = array[i];
 		if (curFile.level == dir.level + 1) {
 			if (curFile.attribute == 0) {
 				printStr_Red(curFile.filter_name+" ");
@@ -318,22 +339,22 @@ void ls(int pos, string paramter){
 					printStr(to_string(curFile.size) + "\n");
 				}
 			}
-		}
+		}else{
+            break;
+        }
 	}
 	printStr("\n");
 
-    // under sub directory
+    // 子文件夹下的子文件和子文件夹，递归
     for (int i = pos; i < tableSize; i++) {
-		FileInfo &curFile = fileInfoArray[i];
-		if (curFile.level == dir.level) {
-			break;
-		}
-
+		FileInfo &curFile = array[i];
 		if (curFile.level == dir.level + 1) {
 			if (curFile.attribute == 0) {
 				ls(i, paramter);
 			}
-		}
+		}else[
+            break;
+        ]
 	}
 }
 
@@ -341,7 +362,7 @@ void cat(int pos) {
 	ifstream image;
 	char text[10000];
 	image.open(imgName);
-	FileInfo &file = fileInfoArray[pos];
+	FileInfo &file = array[pos];
 	string name = file.filter_name;
 
 	if (name.length() < 4 || name.substr(name.length() - 4, 4) != ".TXT") {
@@ -375,15 +396,15 @@ int getNextCluster(int cluster, ifstream& image) {
 	}
 
 	//读取第current个fat表项
-	int n = cluster / 2 * 3;  //得到奇偶合并的3字节的起始字节位置
-	int type = cluster % 2;
+	int n = cluster / 2 * 3;  // 将三个字节看作一组，且单位为byte,起始字节
+	int type = cluster % 2;  // 判断左侧12bit还是右侧
 	int num1 = 0;
 	int num2 = 0;
 	char *p1 = (char*)&num1;
 	char *p2 = (char*)&num2;
 	int next;
+    // 代表左侧12bit
 	if (type == 0) {
-		//若是偶数，处理左侧两字节
 		image.seekg(1 * 512 + n);
 		image.read(p1, 1);
 		image.read(p2, 1);
@@ -392,7 +413,7 @@ int getNextCluster(int cluster, ifstream& image) {
 		next = num1 + (num2 << 8);
 	}
 	else {
-		//若是奇数，处理右侧两字节
+        // 右侧12bit
 		image.seekg(1 * 512 + n + 1);
 		image.read(p1, 1);
 		image.read(p2, 1);
@@ -410,11 +431,11 @@ int getNextCluster(int cluster, ifstream& image) {
 
 //计算子目录个数
 int subDirNum(int pos) {
-	FileInfo &dir = fileInfoArray[pos];
+	FileInfo &dir = array[pos];
 	int num = 0;
 	pos++;
 	for (int i = pos; i < tableSize; i++) {
-		FileInfo &curFile = fileInfoArray[i];
+		FileInfo &curFile = array[i];
 		if (curFile.level == dir.level) {
 			break;
 		}
@@ -428,11 +449,11 @@ int subDirNum(int pos) {
 
 //计算子文件个数
 int subFileNum(int pos) {
-	FileInfo &dir = fileInfoArray[pos];
+	FileInfo &dir = array[pos];
 	int num = 0;
 	pos++;
 	for (int i = pos; i < tableSize; i++) {
-		FileInfo &curFile = fileInfoArray[i];
+		FileInfo &curFile = array[i];
 		if (curFile.level == dir.level) {
 			break;
 		}
@@ -444,3 +465,14 @@ int subFileNum(int pos) {
 	return num;
 }
 
+// ptr指针占4byte, int也占4byte 
+void printStr(string s) {
+	const char *ptr = s.c_str();
+	asmPrint(ptr, 0);
+}
+
+// ptr指针占4byte, int也占4byte 
+void printStr_Red(string s) {
+	const char *ptr = s.c_str();
+	asmPrint(ptr, 1);
+}
